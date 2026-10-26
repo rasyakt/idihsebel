@@ -6,6 +6,7 @@
     "drag_distance_ratio": 0.114,
     "hotkey": "F6",
     "anti_afk_jitter": true,
+    "auto_recover_click": true,
     "sound_beep": true,
     "always_on_top": true,
     "auto_rehold_min": 10

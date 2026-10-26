@@ -1,9 +1,11 @@
 """
 =============================================================================
-Growtopia Punch Joystick Auto-Hold for LDPlayer
+Growtopia Punch Joystick Auto-Hold for LDPlayer (Enhanced Anti-Drop)
 Dibuat khusus untuk menahan joystick punch Growtopia selama mungkin di LDPlayer.
-Mendukung Mode Background (bisa sambil browsing/buka aplikasi lain tanpa ganggu mouse)
-dan Mode Foreground (mouse fisik langsung).
+Mendukung:
+1. Mode Background (Bisa sambil browsing, multitasking tanpa lepas).
+2. Auto-Recovery Anti-Lepas: Otomatis re-hold seketika jika Anda klik mouse di luar LDPlayer!
+3. Mode Foreground (Direct Mouse fisik).
 =============================================================================
 """
 
@@ -23,15 +25,7 @@ try:
 except ImportError:
     winsound = None
 
-# OpenCV for auto-detection
-try:
-    import cv2
-    import numpy as np
-    HAS_OPENCV = True
-except ImportError:
-    HAS_OPENCV = False
-
-# Win32 API definitions
+# Win32 API
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
@@ -44,33 +38,32 @@ MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP   = 0x0004
 MOUSEEVENTF_MOVE     = 0x0001
 
-VK_F6      = 0x75
-VK_F8      = 0x77
-VK_ESCAPE  = 0x1B
+VK_F6       = 0x75
+VK_ESCAPE   = 0x1B
+VK_LBUTTON  = 0x01
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gt_config.json")
 
-# Default relative coordinates (berdasarkan template dari Growtopia UI di LDPlayer)
-# Canvas width = w, height = h
 DEFAULT_CONFIG = {
-    "mode": "background",          # "background" atau "foreground"
-    "direction": "down",           # "down", "right", "left", "up", "down_right", "down_left"
-    "center_ratio_x": 0.7596,      # 75.96% lebar render
-    "center_ratio_y": 0.7883,      # 78.83% tinggi render
-    "drag_distance_ratio": 0.1140, # 11.4% drag jarak joystick
+    "mode": "background",
+    "direction": "down",
+    "center_ratio_x": 0.7596,
+    "center_ratio_y": 0.7883,
+    "drag_distance_ratio": 0.1140,
     "hotkey": "F6",
     "anti_afk_jitter": True,
+    "auto_recover_click": True,   # Otomatis re-hold jika user klik di luar LDPlayer
     "sound_beep": True,
     "always_on_top": True,
-    "auto_rehold_min": 10          # Re-hold setiap 10 menit agar tidak stale
+    "auto_rehold_min": 5
 }
 
 class GTPunchHolderApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Growtopia Punch Auto-Hold (LDPlayer)")
-        self.root.geometry("450x640")
-        self.root.minsize(440, 600)
+        self.root.geometry("450x660")
+        self.root.minsize(440, 620)
         self.root.configure(bg="#141619")
 
         self.load_config()
@@ -80,7 +73,6 @@ class GTPunchHolderApp:
         self.hwnd_render = None
         self.hwnd_main = None
 
-        # Setup Thread Desktop if running in isolated context
         try:
             hDesk = user32.OpenDesktopW('default', 0, False, 0x10000000 | 0x01FF)
             if hDesk:
@@ -113,7 +105,6 @@ class GTPunchHolderApp:
         if self.config.get("always_on_top", True):
             self.root.attributes("-topmost", True)
 
-        # Style definition
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TLabel", background="#141619", foreground="#dcdcdc", font=("Segoe UI", 9))
@@ -133,7 +124,7 @@ class GTPunchHolderApp:
         header_box = ttk.Frame(main_frame)
         header_box.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(header_box, text="⚡ GROWTOPIA PUNCH HOLDER", style="Header.TLabel").pack(anchor=tk.W)
-        ttk.Label(header_box, text="Auto-Hold Joystick Punch Khusus LDPlayer | Tekan F6 untuk Mulai/Stop", style="Sub.TLabel").pack(anchor=tk.W)
+        ttk.Label(header_box, text="Auto-Hold Anti-Lepas Khusus LDPlayer | Tekan F6 untuk Mulai/Stop", style="Sub.TLabel").pack(anchor=tk.W)
 
         # 2. Main Action Card (Status & Big Button)
         status_card = ttk.Frame(main_frame, style="Card.TFrame", padding=12)
@@ -196,22 +187,35 @@ class GTPunchHolderApp:
         dir_grid = ttk.Frame(dir_card, style="Card.TFrame")
         dir_grid.pack(fill=tk.X, pady=2)
 
-        # Radio grid
-        ttk.Radiobutton(dir_grid, text="⬇️ Bawah (Farming Bawah / Default)", value="down", variable=self.var_dir, command=self.on_dir_change).grid(row=0, column=0, sticky="w", pady=2, padx=4)
+        ttk.Radiobutton(dir_grid, text="⬇️ Bawah (Default Farming)", value="down", variable=self.var_dir, command=self.on_dir_change).grid(row=0, column=0, sticky="w", pady=2, padx=4)
         ttk.Radiobutton(dir_grid, text="➡️ Kanan", value="right", variable=self.var_dir, command=self.on_dir_change).grid(row=0, column=1, sticky="w", pady=2, padx=4)
         ttk.Radiobutton(dir_grid, text="⬅️ Kiri", value="left", variable=self.var_dir, command=self.on_dir_change).grid(row=1, column=0, sticky="w", pady=2, padx=4)
         ttk.Radiobutton(dir_grid, text="⬆️ Atas", value="up", variable=self.var_dir, command=self.on_dir_change).grid(row=1, column=1, sticky="w", pady=2, padx=4)
         ttk.Radiobutton(dir_grid, text="↘️ Bawah-Kanan", value="down_right", variable=self.var_dir, command=self.on_dir_change).grid(row=2, column=0, sticky="w", pady=2, padx=4)
         ttk.Radiobutton(dir_grid, text="↙️ Bawah-Kiri", value="down_left", variable=self.var_dir, command=self.on_dir_change).grid(row=2, column=1, sticky="w", pady=2, padx=4)
 
-        # 5. Options & Anti-AFK
+        # 5. Options & Anti-Drop Auto-Recovery
         opt_card = ttk.Frame(main_frame, style="Card.TFrame", padding=12)
         opt_card.pack(fill=tk.X, pady=(0, 10))
 
-        tk.Label(opt_card, text="PENGATURAN & ANTI-LEPAS:", bg="#1d2024", fg="#00e5ff", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+        tk.Label(opt_card, text="FITUR ANTI-LEPAS (BACKGROUND AUTO-RECOVERY):", bg="#1d2024", fg="#00e5ff", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+
+        self.var_recover = tk.BooleanVar(value=self.config.get("auto_recover_click", True))
+        cb_recover = ttk.Checkbutton(
+            opt_card,
+            text="🛡️ Auto-Recovery: Re-hold otomatis seketika bila mouse diklik di luar LDPlayer",
+            variable=self.var_recover,
+            command=self.on_opt_change
+        )
+        cb_recover.pack(anchor=tk.W, pady=2)
 
         self.var_jitter = tk.BooleanVar(value=self.config.get("anti_afk_jitter", True))
-        cb_jitter = ttk.Checkbutton(opt_card, text="Anti-AFK / Anti-Stuck Jitter (Mikro gerakan 1px agar tahan selamanya)", variable=self.var_jitter, command=self.on_opt_change)
+        cb_jitter = ttk.Checkbutton(
+            opt_card,
+            text="🔄 Anti-AFK / Anti-Stuck Jitter (Mikro gerakan kontinu agar tahan selamanya)",
+            variable=self.var_jitter,
+            command=self.on_opt_change
+        )
         cb_jitter.pack(anchor=tk.W, pady=2)
 
         self.var_sound = tk.BooleanVar(value=self.config.get("sound_beep", True))
@@ -228,7 +232,7 @@ class GTPunchHolderApp:
 
         self.btn_detect = tk.Button(
             btn_box,
-            text="🔍 Auto-Deteksi LDPlayer & Joystick",
+            text="🔍 Auto-Deteksi LDPlayer",
             font=("Segoe UI", 9),
             bg="#2d3436",
             fg="#dfe6e9",
@@ -267,6 +271,7 @@ class GTPunchHolderApp:
         self.save_config()
 
     def on_opt_change(self):
+        self.config["auto_recover_click"] = self.var_recover.get()
         self.config["anti_afk_jitter"] = self.var_jitter.get()
         self.config["sound_beep"] = self.var_sound.get()
         self.save_config()
@@ -278,10 +283,8 @@ class GTPunchHolderApp:
         self.save_config()
 
     def find_ldplayer_windows(self):
-        """Mencari jendela LDPlayer dan child render window"""
         hwnd_main = user32.FindWindowW("LDPlayerMainFrame", None)
         if not hwnd_main:
-            # Fallback search by title
             def cb(hwnd, lparam):
                 length = user32.GetWindowTextLengthW(hwnd)
                 if length > 0:
@@ -299,7 +302,6 @@ class GTPunchHolderApp:
         if not hwnd_main:
             return None, None
 
-        # Cari RenderWindow (TheRender) atau subWin (sub)
         hwnd_render = user32.FindWindowExW(hwnd_main, None, "RenderWindow", "TheRender")
         if not hwnd_render:
             hwnd_render = user32.FindWindowExW(hwnd_main, None, "subWin", "sub")
@@ -309,7 +311,6 @@ class GTPunchHolderApp:
         return hwnd_main, hwnd_render
 
     def auto_detect_joystick(self):
-        """Mendeteksi jendela LDPlayer dan mengukur canvas secara langsung"""
         hwnd_main, hwnd_render = self.find_ldplayer_windows()
         if not hwnd_main or not hwnd_render:
             messagebox.showerror("Error", "Jendela LDPlayer tidak ditemukan!\nPastikan LDPlayer sudah dijalankan.")
@@ -323,8 +324,8 @@ class GTPunchHolderApp:
         self.hwnd_main = hwnd_main
         self.hwnd_render = hwnd_render
 
-        msg = f"LDPlayer Berhasil Ditemukan!\nHdr: {hex(hwnd_main)} | Canvas: {w}x{h}\n\nKoordinat joystick otomatis dikalibrasi sesuai rasio layar."
-        self.lbl_info.config(text=f"LDPlayer terhubung (Canvas {w}x{h}). Tekan F6 untuk Mulai.", fg="#00cec9")
+        msg = f"LDPlayer Berhasil Ditemukan!\nHwnd: {hex(hwnd_main)} | Canvas: {w}x{h}\n\nFitur Auto-Recovery Anti-Lepas aktif."
+        self.lbl_info.config(text=f"LDPlayer terhubung ({w}x{h}). Tekan F6 untuk Mulai.", fg="#00cec9")
         messagebox.showinfo("Terhubung", msg)
 
     def reset_coordinates(self):
@@ -347,7 +348,7 @@ class GTPunchHolderApp:
         hwnd_main, hwnd_render = self.find_ldplayer_windows()
         if not hwnd_main or not hwnd_render:
             self.lbl_info.config(text="Gagal: LDPlayer tidak ditemukan!", fg="#ff7675")
-            if self.config.get("sound_beep"):
+            if self.config.get("sound_beep") and winsound:
                 winsound.Beep(400, 200)
             return
 
@@ -356,16 +357,14 @@ class GTPunchHolderApp:
         self.is_holding = True
         self.start_time = time.time()
 
-        # Update UI
         self.lbl_status.config(text="● STATUS: SEDANG MENAHAN JOYSTICK", fg="#00b894")
         self.btn_toggle.config(text="⏹ HENTIKAN HOLD (F6)", bg="#d63031", activebackground="#c0392b")
-        mode_text = "Background (Bisa sambil browsing)" if self.config.get("mode") == "background" else "Foreground (Mouse fisik)"
-        self.lbl_info.config(text=f"Aktif [{mode_text}]. Arah: {self.config.get('direction').upper()}. Tekan F6/ESC utk stop.", fg="#55efc4")
+        mode_text = "Background (Anti-Lepas Aktif)" if self.config.get("mode") == "background" else "Foreground"
+        self.lbl_info.config(text=f"Aktif [{mode_text}]. Tekan F6/ESC utk stop.", fg="#55efc4")
 
         if self.config.get("sound_beep") and winsound:
             winsound.Beep(1000, 150)
 
-        # Launch hold thread
         self.hold_thread = threading.Thread(target=self._run_hold_loop, daemon=True)
         self.hold_thread.start()
 
@@ -410,7 +409,7 @@ class GTPunchHolderApp:
             self._run_foreground_hold(hwnd_render)
 
     def _run_background_hold(self, hwnd_render):
-        """Menahan joystick menggunakan PostMessage ke RenderWindow (Bisa sambil browsing)"""
+        """Menahan joystick dengan sistem Auto-Recovery Anti-Lepas saat klik luar"""
         def make_lparam(x, y):
             return (int(y) << 16) | (int(x) & 0xFFFF)
 
@@ -430,59 +429,64 @@ class GTPunchHolderApp:
         end_x = start_x + dx
         end_y = start_y + dy
 
-        # 1. Tekan tombol mouse di titik pusat joystick
-        user32.PostMessageW(hwnd_render, WM_MOUSEMOVE, 0, make_lparam(start_x, start_y))
-        time.sleep(0.01)
-        user32.PostMessageW(hwnd_render, WM_LBUTTONDOWN, MK_LBUTTON, make_lparam(start_x, start_y))
-        time.sleep(0.02)
-
-        # 2. Drag halus dari pusat ke arah tujuan (misal ke bawah)
-        steps = 10
-        for i in range(1, steps + 1):
-            if not self.is_holding:
-                user32.PostMessageW(hwnd_render, WM_LBUTTONUP, 0, make_lparam(start_x, start_y))
-                return
-            cur_x = int(start_x + (end_x - start_x) * (i / float(steps)))
-            cur_y = int(start_y + (end_y - start_y) * (i / float(steps)))
-            user32.PostMessageW(hwnd_render, WM_MOUSEMOVE, MK_LBUTTON, make_lparam(cur_x, cur_y))
+        def perform_drag():
+            # Inisiasi sentuhan di pusat joystick lalu drag ke arah target
+            user32.PostMessageW(hwnd_render, WM_MOUSEMOVE, 0, make_lparam(start_x, start_y))
+            time.sleep(0.01)
+            user32.PostMessageW(hwnd_render, WM_LBUTTONDOWN, MK_LBUTTON, make_lparam(start_x, start_y))
             time.sleep(0.015)
+            steps = 8
+            for i in range(1, steps + 1):
+                cur_x = int(start_x + (end_x - start_x) * (i / float(steps)))
+                cur_y = int(start_y + (end_y - start_y) * (i / float(steps)))
+                user32.PostMessageW(hwnd_render, WM_MOUSEMOVE, MK_LBUTTON, make_lparam(cur_x, cur_y))
+                time.sleep(0.01)
 
-        # 3. Tahan terus menerus selama mungkin dengan micro-jitter (agar tidak lepas & anti-AFK)
-        jitter_state = 0
+        # 1. Mulai drag awal
+        perform_drag()
+
+        # 2. Main Loop dengan Auto-Recovery Deteksi Klik Fisik di Luar Jendela
         counter = 0
+        phys_mouse_was_down = False
+        last_heartbeat = time.time()
         last_rehold = time.time()
-        rehold_interval = self.config.get("auto_rehold_min", 10) * 60
+        rehold_interval = self.config.get("auto_rehold_min", 5) * 60
 
         while self.is_holding:
             counter += 1
-            if self.config.get("anti_afk_jitter", True):
-                jitter_state = 1 if (counter % 2 == 0) else 0
-            else:
-                jitter_state = 0
 
-            # Kirim mouse move state tombol tetap ditekan
+            # Deteksi apakah user baru saja mengklik mouse fisik di luar jendela LDPlayer
+            if self.config.get("auto_recover_click", True):
+                is_phys_down = (user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0
+                if is_phys_down and not phys_mouse_was_down:
+                    phys_mouse_was_down = True
+                elif not is_phys_down and phys_mouse_was_down:
+                    # User baru saja melepaskan klik mouse di luar (misal setelah klik link Chrome)
+                    phys_mouse_was_down = False
+                    # Beri jeda 25ms agar pesan release dari Windows selesai, lalu langsung re-drag!
+                    time.sleep(0.025)
+                    perform_drag()
+
+            # Heartbeat check: setiap 4 detik, perbarui sentuhan agar tidak ada time-out dari driver
+            if time.time() - last_heartbeat > 4.0:
+                last_heartbeat = time.time()
+                user32.PostMessageW(hwnd_render, WM_MOUSEMOVE, MK_LBUTTON, make_lparam(end_x, end_y))
+
+            # Auto re-hold interval berkala
+            if rehold_interval > 0 and (time.time() - last_rehold) > rehold_interval:
+                last_rehold = time.time()
+                perform_drag()
+
+            # Micro-jitter kontinu
+            jitter_state = 1 if (self.config.get("anti_afk_jitter", True) and counter % 2 == 0) else 0
             user32.PostMessageW(hwnd_render, WM_MOUSEMOVE, MK_LBUTTON, make_lparam(end_x, end_y + jitter_state))
 
-            # Auto re-hold check (misal setiap 10 menit sekali lepas 30ms lalu hold lagi agar koneksi touch fresh)
-            if rehold_interval > 0 and (time.time() - last_rehold) > rehold_interval:
-                user32.PostMessageW(hwnd_render, WM_LBUTTONUP, 0, make_lparam(end_x, end_y))
-                time.sleep(0.03)
-                user32.PostMessageW(hwnd_render, WM_LBUTTONDOWN, MK_LBUTTON, make_lparam(start_x, start_y))
-                time.sleep(0.02)
-                for i in range(1, steps + 1):
-                    cur_x = int(start_x + (end_x - start_x) * (i / float(steps)))
-                    cur_y = int(start_y + (end_y - start_y) * (i / float(steps)))
-                    user32.PostMessageW(hwnd_render, WM_MOUSEMOVE, MK_LBUTTON, make_lparam(cur_x, cur_y))
-                    time.sleep(0.01)
-                last_rehold = time.time()
+            time.sleep(0.05)
 
-            time.sleep(0.1)
-
-        # 4. Lepaskan klik saat berhenti
+        # 3. Lepaskan klik saat dimatikan
         user32.PostMessageW(hwnd_render, WM_LBUTTONUP, 0, make_lparam(end_x, end_y))
 
     def _run_foreground_hold(self, hwnd_render):
-        """Menahan joystick menggunakan kursor mouse fisik Windows"""
         rect = wintypes.RECT()
         user32.GetClientRect(hwnd_render, ctypes.byref(rect))
         w = max(rect.right - rect.left, 100)
@@ -499,24 +503,20 @@ class GTPunchHolderApp:
         end_client_x = start_client_x + dx
         end_client_y = start_client_y + dy
 
-        # Convert ke Screen coordinates
         pt_start = wintypes.POINT(start_client_x, start_client_y)
         user32.ClientToScreen(hwnd_render, ctypes.byref(pt_start))
 
         pt_end = wintypes.POINT(end_client_x, end_client_y)
         user32.ClientToScreen(hwnd_render, ctypes.byref(pt_end))
 
-        # Fokuskan jendela LDPlayer
         user32.SetForegroundWindow(self.hwnd_main)
         time.sleep(0.1)
 
-        # Gerakkan kursor ke titik pusat
         user32.SetCursorPos(pt_start.x, pt_start.y)
         time.sleep(0.05)
         user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
         time.sleep(0.05)
 
-        # Drag halus ke arah target
         steps = 15
         for i in range(1, steps + 1):
             if not self.is_holding:
@@ -527,27 +527,23 @@ class GTPunchHolderApp:
             user32.SetCursorPos(cx, cy)
             time.sleep(0.015)
 
-        # Loop tahan terus
         counter = 0
         while self.is_holding:
             counter += 1
             if self.config.get("anti_afk_jitter", True):
                 jitter = 1 if (counter % 2 == 0) else 0
                 user32.SetCursorPos(pt_end.x, pt_end.y + jitter)
-            time.sleep(0.1)
+            time.sleep(0.05)
 
-        # Lepaskan klik fisik
         user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
     def start_hotkey_listener(self):
-        """Background thread untuk mendeteksi penekanan hotkey global (F6 & ESC)"""
         def listener():
             f6_was_down = False
             esc_was_down = False
             while True:
                 time.sleep(0.02)
                 try:
-                    # Cek F6
                     f6_state = (user32.GetAsyncKeyState(VK_F6) & 0x8000) != 0
                     if f6_state and not f6_was_down:
                         f6_was_down = True
@@ -555,7 +551,6 @@ class GTPunchHolderApp:
                     elif not f6_state:
                         f6_was_down = False
 
-                    # Cek ESC (Panic Button / Stop)
                     esc_state = (user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0
                     if esc_state and not esc_was_down:
                         esc_was_down = True
@@ -570,7 +565,6 @@ class GTPunchHolderApp:
         t.start()
 
     def update_timer_loop(self):
-        """Update counter durasi menahan joystick secara real-time"""
         if self.is_holding and self.start_time > 0:
             elapsed = int(time.time() - self.start_time)
             h = elapsed // 3600
