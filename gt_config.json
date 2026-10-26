@@ -1,0 +1,12 @@
+{
+    "mode": "background",
+    "direction": "down",
+    "center_ratio_x": 0.7596,
+    "center_ratio_y": 0.7883,
+    "drag_distance_ratio": 0.114,
+    "hotkey": "F6",
+    "anti_afk_jitter": true,
+    "sound_beep": true,
+    "always_on_top": true,
+    "auto_rehold_min": 10
+}
